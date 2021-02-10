@@ -53,8 +53,8 @@ type Cache struct {
 
 // Snapshot contains configuration needed for persistent caching
 type Snapshot struct {
-	Export bool   `hcl:"export"`
-	Path   string `hcl:"path"`
+	RemoveAfterImport bool   `hcl:"remove_after_import"`
+	Path              string `hcl:"path"`
 }
 
 // AutoAuth is the configured authentication method and sinks

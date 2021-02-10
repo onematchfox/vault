@@ -458,19 +458,6 @@ func (c *AgentCommand) Run(args []string) int {
 			return 1
 		}
 
-		// If snapshot.export = true, setup bolt for persistent storage
-		var ps persistcache.Storage
-		if config.Cache.Snapshot != nil {
-			if config.Cache.Snapshot.Export {
-				ps, err = persistcache.NewBoltStorage(config.Cache.Snapshot.Path)
-				if err != nil {
-					c.UI.Error(fmt.Sprintf("Error creating persistent cache: %v", err))
-					return 1
-				}
-				c.UI.Info(fmt.Sprintf("configured persistent storage at %q", config.Cache.Snapshot.Path))
-			}
-		}
-
 		// Create the lease cache proxier and set its underlying proxier to
 		// the API proxier.
 		leaseCache, err := cache.NewLeaseCache(&cache.LeaseCacheConfig{
@@ -478,27 +465,48 @@ func (c *AgentCommand) Run(args []string) int {
 			BaseContext: ctx,
 			Proxier:     apiProxy,
 			Logger:      cacheLogger.Named("leasecache"),
-			Storage:     ps,
 		})
 		if err != nil {
 			c.UI.Error(fmt.Sprintf("Error creating lease cache: %v", err))
 			return 1
 		}
 
-		// If snapshot.export = false, restore in-memory lease cache from bolt file
+		// Configure persistent storage and add to LeaseCache
 		if config.Cache.Snapshot != nil {
-			if !config.Cache.Snapshot.Export {
-				loadStorage, err := persistcache.NewBoltStorage(config.Cache.Snapshot.Path)
-				if err != nil {
-					c.UI.Error(fmt.Sprintf("Error loading persistent cache file: %v", err))
+			if config.Cache.Snapshot.Path == "" {
+				c.UI.Error("must specify persistent cache path")
+				return 1
+			}
+			ps, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
+				Path:      config.Cache.Snapshot.Path,
+				TopBucket: "insert key hash here",
+				Logger:    cacheLogger.Named("persistcache"),
+			})
+			if err != nil {
+				c.UI.Error(fmt.Sprintf("Error creating persistent cache: %v", err))
+				return 1
+			}
+			c.logger.Info("configured persistent storage", "path", config.Cache.Snapshot.Path)
+
+			// Restore anything in the persistent cache to the memory cache
+			if err := leaseCache.Restore(ps); err != nil {
+				c.UI.Error(fmt.Sprintf("Error restoring in-memory cache from persisted file: %v", err))
+				return 1
+			}
+			c.logger.Info("loaded memcache from persistent storage")
+
+			// Remove the cache file if specified
+			if config.Cache.Snapshot.RemoveAfterImport {
+				if err := ps.Close(); err != nil {
+					c.UI.Error(fmt.Sprintf("failed to close persistent cache file: %s", err))
 					return 1
 				}
-				if err := leaseCache.Restore(loadStorage); err != nil {
-					c.UI.Error(fmt.Sprintf("Error restoring in-memory cache from persisted file: %v", err))
-					return 1
+				if err := os.Remove(config.Cache.Snapshot.Path); err != nil {
+					c.UI.Error(fmt.Sprintf("failed to remove persistent storage file"))
 				}
-				c.UI.Info(fmt.Sprintf("loaded cache from persistent storage at %q", config.Cache.Snapshot.Path))
-				// TODO(tvoran): remove bolt storage file here
+			} else {
+				defer ps.Close()
+				leaseCache.SetPersistentStorage(ps)
 			}
 		}
 

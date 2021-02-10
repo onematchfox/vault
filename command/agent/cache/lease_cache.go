@@ -138,9 +138,6 @@ func NewLeaseCache(conf *LeaseCacheConfig) (*LeaseCache, error) {
 	// Create a base context for the lease cache layer
 	baseCtxInfo := cachememdb.NewContextInfo(conf.BaseContext)
 
-	// TODO(tvoran): setup persistence here if enabled (crypto and storage)?
-	// set storage interface to something
-
 	return &LeaseCache{
 		client:        conf.Client,
 		proxier:       conf.Proxier,
@@ -152,6 +149,12 @@ func NewLeaseCache(conf *LeaseCacheConfig) (*LeaseCache, error) {
 		inflightCache: gocache.New(gocache.NoExpiration, gocache.NoExpiration),
 		ps:            conf.Storage,
 	}, nil
+}
+
+// SetPersistentStorage is a setter for the persistent storage field in
+// LeaseCache
+func (c *LeaseCache) SetPersistentStorage(storageIn persistcache.Storage) {
+	c.ps = storageIn
 }
 
 // checkCacheForRequest checks the cache for a particular request based on its
@@ -323,9 +326,10 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 	}
 
 	var renewCtxInfo *cachememdb.ContextInfo
+	var indexType persistcache.IndexType
 	switch {
 	case secret.LeaseID != "":
-		c.logger.Debug("processing lease response", "method", req.Request.Method, "path", req.Request.URL.Path)
+		c.logger.Trace("processing lease response", "method", req.Request.Method, "path", req.Request.URL.Path)
 		entry, err := c.db.Get(cachememdb.IndexNameToken, req.Token)
 		if err != nil {
 			return nil, err
@@ -343,8 +347,10 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 		index.Lease = secret.LeaseID
 		index.LeaseToken = req.Token
 
+		indexType = persistcache.SecretLeaseType
+
 	case secret.Auth != nil:
-		c.logger.Debug("processing auth response", "method", req.Request.Method, "path", req.Request.URL.Path)
+		c.logger.Trace("processing auth response", "method", req.Request.Method, "path", req.Request.URL.Path)
 
 		// Check if this token creation request resulted in a non-orphan token, and if so
 		// correctly set the parentCtx to the request's token context.
@@ -370,6 +376,8 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 		renewCtxInfo = c.createCtxInfo(parentCtx)
 		index.Token = secret.Auth.ClientToken
 		index.TokenAccessor = secret.Auth.Accessor
+
+		indexType = persistcache.AuthLeaseType
 
 	default:
 		// We shouldn't be hitting this, but will err on the side of caution and
@@ -413,7 +421,7 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 	// Store the index in the cache
 	c.logger.Debug("storing response into the cache", "method", req.Request.Method, "path", req.Request.URL.Path)
 	q.Q("storing in cache", index) // DEBUG
-	err = c.Set(index, persistcache.LeaseType)
+	err = c.Set(index, indexType)
 	if err != nil {
 		c.logger.Error("failed to cache the proxied response", "error", err)
 		return nil, err
@@ -439,10 +447,12 @@ func (c *LeaseCache) startRenewing(ctx context.Context, index *cachememdb.Index,
 		id := ctx.Value(contextIndexID).(string)
 		c.logger.Debug("evicting index from cache", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
 		err := c.Evict(id)
+		c.logger.Trace("evicted index from cache", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
 		if err != nil {
 			c.logger.Error("failed to evict index", "id", id, "error", err)
 			return
 		}
+		c.logger.Trace("finished evict defer", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
 	}()
 
 	client, err := c.client.Clone()
@@ -663,7 +673,9 @@ func (c *LeaseCache) handleCacheClear(ctx context.Context, in *cacheClearInput) 
 		if err := c.db.Flush(); err != nil {
 			return err
 		}
-		// TODO(tvoran): clear persistence too?
+		// TODO(tvoran): clear persistence here too? though everything should be
+		// evicted when the context is cancelled. though might be a good
+		// maintenance function.
 
 	default:
 		return errInvalidType
@@ -895,6 +907,7 @@ func (c *LeaseCache) Set(index *cachememdb.Index, indexType persistcache.IndexTy
 // Evict removes an Index from the cachememdb, and also removes it from the
 // persistent cache (if enabled)
 func (c *LeaseCache) Evict(id string) error {
+	c.logger.Trace("going to evict index", "id", id)
 	if err := c.db.Evict(cachememdb.IndexNameID, id); err != nil {
 		return err
 	}
@@ -918,10 +931,33 @@ func (c *LeaseCache) Restore(storage persistcache.Storage) error {
 	if err != nil {
 		return err
 	}
+	if err := c.restoreTokens(tokens); err != nil {
+		return err
+	}
+
+	// Then process auth leases
+	authLeases, err := storage.GetByType(persistcache.AuthLeaseType)
+	if err != nil {
+		return err
+	}
+	if err := c.restoreLeases(authLeases); err != nil {
+		return err
+	}
+
+	// Then process secret leases
+	secretLeases, err := storage.GetByType(persistcache.SecretLeaseType)
+	if err != nil {
+		return err
+	}
+	if err := c.restoreLeases(secretLeases); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *LeaseCache) restoreTokens(tokens [][]byte) error {
 	for _, token := range tokens {
-
-		// TODO(tvoran): Decrypt here?
-
 		newIndex, err := cachememdb.Deserialize(token)
 		if err != nil {
 			return err
@@ -930,18 +966,13 @@ func (c *LeaseCache) Restore(storage persistcache.Storage) error {
 		if err := c.db.Set(newIndex); err != nil {
 			return err
 		}
-		c.logger.Debug("restored token", "id", newIndex.ID)
+		c.logger.Trace("restored token", "id", newIndex.ID)
 	}
+	return nil
+}
 
-	// Then process leases
-	leases, err := storage.GetByType(persistcache.LeaseType)
-	if err != nil {
-		return err
-	}
+func (c *LeaseCache) restoreLeases(leases [][]byte) error {
 	for _, lease := range leases {
-
-		// TODO(tvoran): Decrypt here
-
 		newIndex, err := cachememdb.Deserialize(lease)
 		if err != nil {
 			return err
@@ -952,9 +983,8 @@ func (c *LeaseCache) Restore(storage persistcache.Storage) error {
 		if err := c.db.Set(newIndex); err != nil {
 			return err
 		}
-		c.logger.Debug("restored lease", "id", newIndex.ID, "path", newIndex.RequestPath)
+		c.logger.Trace("restored lease", "id", newIndex.ID, "path", newIndex.RequestPath)
 	}
-
 	return nil
 }
 
@@ -984,10 +1014,14 @@ func (c *LeaseCache) ReCreateLeaseRenewCtx(index *cachememdb.Index) error {
 	case secret.LeaseID != "":
 		q.Q("got a secret with a lease", secret) // DEBUG
 		// makeRenewCtxLease()
-		c.logger.Debug("processing lease response", "method", index.RequestMethod, "path", index.RequestPath)
 		entry, err := c.db.Get(cachememdb.IndexNameToken, index.RequestToken)
 		if err != nil {
 			return err
+		}
+
+		if entry == nil {
+			// TODO(tvoran): log a warning here instead of failing
+			return fmt.Errorf("could not find parent Token %s for req path %s", index.RequestToken, index.RequestPath)
 		}
 
 		// Derive a context for renewal using the token's context
@@ -1005,6 +1039,7 @@ func (c *LeaseCache) ReCreateLeaseRenewCtx(index *cachememdb.Index) error {
 			// either.
 			if entry == nil {
 				// c.logger.Debug("pass-through auth response; parent token not managed by agent", "method", req.Request.Method, "path", req.Request.URL.Path)
+				// TODO(tvoran): log a warning here instead of failing
 				return fmt.Errorf("could not find parent Token %s for req path %s", index.RequestToken, index.RequestPath)
 			}
 

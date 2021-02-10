@@ -665,7 +665,11 @@ func TestLeaseCache_CacheAndRestore(t *testing.T) {
 
 	// stor := persistcache.NewMapStorage()
 	// lc := testNewLeaseCache(t, responses, stor)
-	b, err := persistcache.NewBoltStorage("/tmp/mybolt.db")
+	b, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
+		Path:      "/tmp/mybolt.db",
+		TopBucket: "topbucketname",
+		Logger:    hclog.Default(),
+	})
 	require.NoError(t, err)
 	require.NotNil(t, b)
 	lc := testNewLeaseCache(t, responses, b)

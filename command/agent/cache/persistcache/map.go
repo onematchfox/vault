@@ -6,23 +6,27 @@ import (
 
 // MapStorage is intended for use in tests, does not encrypt data
 type MapStorage struct {
-	tokens map[string][]byte
-	leases map[string][]byte
+	tokens       map[string][]byte
+	secretLeases map[string][]byte
+	authLeases   map[string][]byte
 }
 
 // NewMapStorage returns new MapStorage
 func NewMapStorage() *MapStorage {
 	return &MapStorage{
-		tokens: map[string][]byte{},
-		leases: map[string][]byte{},
+		tokens:       map[string][]byte{},
+		secretLeases: map[string][]byte{},
+		authLeases:   map[string][]byte{},
 	}
 }
 
 // Set an index in the mapstorage
 func (ms *MapStorage) Set(id string, index []byte, indexType IndexType) error {
 	switch indexType {
-	case LeaseType:
-		ms.leases[id] = index
+	case SecretLeaseType:
+		ms.secretLeases[id] = index
+	case AuthLeaseType:
+		ms.authLeases[id] = index
 	case TokenType:
 		ms.tokens[id] = index
 	default:
@@ -34,8 +38,12 @@ func (ms *MapStorage) Set(id string, index []byte, indexType IndexType) error {
 
 // Delete an index by id from mapstorage
 func (ms *MapStorage) Delete(id string) error {
-	if _, ok := ms.leases[id]; ok {
-		delete(ms.leases, id)
+	if _, ok := ms.secretLeases[id]; ok {
+		delete(ms.secretLeases, id)
+		return nil
+	}
+	if _, ok := ms.authLeases[id]; ok {
+		delete(ms.authLeases, id)
 		return nil
 	}
 	if _, ok := ms.tokens[id]; ok {
@@ -51,8 +59,12 @@ func (ms *MapStorage) GetByType(indexType IndexType) ([][]byte, error) {
 	returnBytes := [][]byte{}
 
 	switch indexType {
-	case LeaseType:
-		for _, v := range ms.leases {
+	case AuthLeaseType:
+		for _, v := range ms.authLeases {
+			returnBytes = append(returnBytes, v)
+		}
+	case SecretLeaseType:
+		for _, v := range ms.secretLeases {
 			returnBytes = append(returnBytes, v)
 		}
 	case TokenType:
@@ -64,4 +76,9 @@ func (ms *MapStorage) GetByType(indexType IndexType) ([][]byte, error) {
 	}
 
 	return returnBytes, nil
+}
+
+// Close - noop for mapstorage
+func (ms *MapStorage) Close() error {
+	return nil
 }

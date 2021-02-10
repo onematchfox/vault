@@ -22,7 +22,7 @@ auto_auth {
 cache {
 	use_auto_auth_token = true
 	snapshot = {
-		export = true
+		remove_after_import = true
 		path = "/tmp/bolt-file.db"
 	}
 }

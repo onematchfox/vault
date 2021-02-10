@@ -67,8 +67,8 @@ func TestLoadConfigFile_AgentCache(t *testing.T) {
 			UseAutoAuthTokenRaw: true,
 			ForceAutoAuthToken:  false,
 			Snapshot: &Snapshot{
-				Export: true,
-				Path:   "/tmp/bolt-file.db",
+				RemoveAfterImport: true,
+				Path:              "/tmp/bolt-file.db",
 			},
 		},
 		Vault: &Vault{
@@ -456,8 +456,8 @@ func TestLoadConfigFile_AgentCache_Snapshot(t *testing.T) {
 	expected := &Config{
 		Cache: &Cache{
 			Snapshot: &Snapshot{
-				Export: false,
-				Path:   "/tmp/bolt-file.db",
+				RemoveAfterImport: false,
+				Path:              "/tmp/bolt-file.db",
 			},
 		},
 		SharedConfig: &configutil.SharedConfig{
