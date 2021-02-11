@@ -13,9 +13,9 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func (b *backend) pathTidyIdentityWhitelist() *framework.Path {
+func (b *backend) pathTidyIdentityAccessList() *framework.Path {
 	return &framework.Path{
-		Pattern: "tidy/identity-whitelist$",
+		Pattern: "tidy/identity-accesslist$",
 		Fields: map[string]*framework.FieldSchema{
 			"safety_buffer": {
 				Type:    framework.TypeDurationSecond,
@@ -81,7 +81,7 @@ func (b *backend) tidyWhitelistIdentity(ctx context.Context, req *logical.Reques
 					return fmt.Errorf("found identity entry for instanceID %q but actual identity is empty", instanceID)
 				}
 
-				var result whitelistIdentity
+				var result accessListIdentity
 				if err := identityEntry.DecodeJSON(&result); err != nil {
 					return err
 				}

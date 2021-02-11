@@ -8,50 +8,52 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func (b *backend) pathIdentityWhitelist() *framework.Path {
+const identityAccessListStorage = "whitelist/identity/"
+
+func (b *backend) pathIdentityAccessList() *framework.Path {
 	return &framework.Path{
-		Pattern: "identity-whitelist/" + framework.GenericNameRegex("instance_id"),
+		Pattern: "identity-accesslist/" + framework.GenericNameRegex("instance_id"),
 		Fields: map[string]*framework.FieldSchema{
 			"instance_id": {
 				Type: framework.TypeString,
 				Description: `EC2 instance ID. A successful login operation from an EC2 instance
-gets cached in this whitelist, keyed off of instance ID.`,
+gets cached in this accesslist, keyed off of instance ID.`,
 			},
 		},
 
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
-				Callback: b.pathIdentityWhitelistRead,
+				Callback: b.pathIdentityAccesslistRead,
 			},
 			logical.DeleteOperation: &framework.PathOperation{
-				Callback: b.pathIdentityWhitelistDelete,
+				Callback: b.pathIdentityAccesslistDelete,
 			},
 		},
 
-		HelpSynopsis:    pathIdentityWhitelistSyn,
-		HelpDescription: pathIdentityWhitelistDesc,
+		HelpSynopsis:    pathIdentityAccessListSyn,
+		HelpDescription: pathIdentityAccessListDesc,
 	}
 }
 
-func (b *backend) pathListIdentityWhitelist() *framework.Path {
+func (b *backend) pathListIdentityAccessList() *framework.Path {
 	return &framework.Path{
-		Pattern: "identity-whitelist/?",
+		Pattern: "identity-accesslist/?",
 
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ListOperation: &framework.PathOperation{
-				Callback: b.pathWhitelistIdentitiesList,
+				Callback: b.pathAccessListIdentitiesList,
 			},
 		},
 
-		HelpSynopsis:    pathListIdentityWhitelistHelpSyn,
-		HelpDescription: pathListIdentityWhitelistHelpDesc,
+		HelpSynopsis:    pathListIdentityAccessListHelpSyn,
+		HelpDescription: pathListIdentityAccessListHelpDesc,
 	}
 }
 
-// pathWhitelistIdentitiesList is used to list all the instance IDs that are present
+// pathAccessListIdentitiesList is used to list all the instance IDs that are present
 // in the identity whitelist. This will list both valid and expired entries.
-func (b *backend) pathWhitelistIdentitiesList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	identities, err := req.Storage.List(ctx, "whitelist/identity/")
+func (b *backend) pathAccessListIdentitiesList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	identities, err := req.Storage.List(ctx, identityAccessListStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +61,8 @@ func (b *backend) pathWhitelistIdentitiesList(ctx context.Context, req *logical.
 }
 
 // Fetch an item from the whitelist given an instance ID.
-func whitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceID string) (*whitelistIdentity, error) {
-	entry, err := s.Get(ctx, "whitelist/identity/"+instanceID)
+func whitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceID string) (*accessListIdentity, error) {
+	entry, err := s.Get(ctx, identityAccessListStorage+instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +70,7 @@ func whitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceID s
 		return nil, nil
 	}
 
-	var result whitelistIdentity
+	var result accessListIdentity
 	if err := entry.DecodeJSON(&result); err != nil {
 		return nil, err
 	}
@@ -77,8 +79,8 @@ func whitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceID s
 
 // Stores an instance ID and the information required to validate further login/renewal attempts from
 // the same instance ID.
-func setWhitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceID string, identity *whitelistIdentity) error {
-	entry, err := logical.StorageEntryJSON("whitelist/identity/"+instanceID, identity)
+func setWhitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceID string, identity *accessListIdentity) error {
+	entry, err := logical.StorageEntryJSON(identityAccessListStorage+instanceID, identity)
 	if err != nil {
 		return err
 	}
@@ -89,18 +91,18 @@ func setWhitelistIdentityEntry(ctx context.Context, s logical.Storage, instanceI
 	return nil
 }
 
-// pathIdentityWhitelistDelete is used to delete an entry from the identity whitelist given an instance ID.
-func (b *backend) pathIdentityWhitelistDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+// pathIdentityAccesslistDelete is used to delete an entry from the identity whitelist given an instance ID.
+func (b *backend) pathIdentityAccesslistDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	instanceID := data.Get("instance_id").(string)
 	if instanceID == "" {
 		return logical.ErrorResponse("missing instance_id"), nil
 	}
 
-	return nil, req.Storage.Delete(ctx, "whitelist/identity/"+instanceID)
+	return nil, req.Storage.Delete(ctx, identityAccessListStorage+instanceID)
 }
 
-// pathIdentityWhitelistRead is used to view an entry in the identity whitelist given an instance ID.
-func (b *backend) pathIdentityWhitelistRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+// pathIdentityAccesslistRead is used to view an entry in the identity whitelist given an instance ID.
+func (b *backend) pathIdentityAccesslistRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	instanceID := data.Get("instance_id").(string)
 	if instanceID == "" {
 		return logical.ErrorResponse("missing instance_id"), nil
@@ -127,8 +129,8 @@ func (b *backend) pathIdentityWhitelistRead(ctx context.Context, req *logical.Re
 	}, nil
 }
 
-// Struct to represent each item in the identity whitelist.
-type whitelistIdentity struct {
+// Struct to represent each item in the identity access list.
+type accessListIdentity struct {
 	Role                     string    `json:"role"`
 	ClientNonce              string    `json:"client_nonce"`
 	CreationTime             time.Time `json:"creation_time"`
@@ -138,28 +140,28 @@ type whitelistIdentity struct {
 	LastUpdatedTime          time.Time `json:"last_updated_time"`
 }
 
-const pathIdentityWhitelistSyn = `
-Read or delete entries in the identity whitelist.
+const pathIdentityAccessListSyn = `
+Read or delete entries in the identity accesslist.
 `
 
-const pathIdentityWhitelistDesc = `
-Each login from an EC2 instance creates/updates an entry in the identity whitelist.
+const pathIdentityAccessListDesc = `
+Each login from an EC2 instance creates/updates an entry in the identity access list.
 
 Entries in this list can be viewed or deleted using this endpoint.
 
-By default, a cron task will periodically look for expired entries in the whitelist
+By default, a cron task will periodically look for expired entries in the access list
 and deletes them. The duration to periodically run this, is one hour by default.
 However, this can be configured using the 'config/tidy/identities' endpoint. This tidy
 action can be triggered via the API as well, using the 'tidy/identities' endpoint.
 `
 
-const pathListIdentityWhitelistHelpSyn = `
-Lists the items present in the identity whitelist.
+const pathListIdentityAccessListHelpSyn = `
+Lists the items present in the identity accesslist.
 `
 
-const pathListIdentityWhitelistHelpDesc = `
-The entries in the identity whitelist is keyed off of the EC2 instance IDs.
-This endpoint lists all the entries present in the identity whitelist, both
+const pathListIdentityAccessListHelpDesc = `
+The entries in the identity access list is keyed off of the EC2 instance IDs.
+This endpoint lists all the entries present in the identity access list, both
 expired and un-expired entries. Use 'tidy/identities' endpoint to clean-up
-the whitelist of identities.
+the access list of identities.
 `

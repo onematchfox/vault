@@ -101,6 +101,8 @@ type backend struct {
 	// upgradeCancelFunc is used to cancel the context used in the upgrade
 	// function
 	upgradeCancelFunc context.CancelFunc
+
+	deprecatedTerms *strings.Replacer
 }
 
 func Backend(_ *logical.BackendConfig) (*backend, error) {
@@ -114,6 +116,11 @@ func Backend(_ *logical.BackendConfig) (*backend, error) {
 		tidyBlacklistCASGuard: new(uint32),
 		tidyWhitelistCASGuard: new(uint32),
 		roleCache:             cache.New(cache.NoExpiration, cache.NoExpiration),
+
+		deprecatedTerms: strings.NewReplacer(
+			"accesslist", "whitelist",
+			"denylist", "blacklist",
+		),
 	}
 
 	b.resolveArnToUniqueIDFunc = b.resolveArnToRealUniqueId
@@ -145,15 +152,28 @@ func Backend(_ *logical.BackendConfig) (*backend, error) {
 			b.pathConfigRotateRoot(),
 			b.pathConfigSts(),
 			b.pathListSts(),
-			b.pathConfigTidyRoletagBlacklist(),
-			b.pathConfigTidyIdentityWhitelist(),
 			b.pathListCertificates(),
-			b.pathListRoletagBlacklist(),
-			b.pathRoletagBlacklist(),
-			b.pathTidyRoletagBlacklist(),
-			b.pathListIdentityWhitelist(),
-			b.pathIdentityWhitelist(),
-			b.pathTidyIdentityWhitelist(),
+
+			b.pathConfigTidyRoletagDenyList(),
+			b.deprecate(b.pathConfigTidyRoletagDenyList()),
+
+			b.pathConfigTidyIdentityAccessList(),
+			b.deprecate(b.pathConfigTidyIdentityAccessList()),
+
+			b.pathListRoletagDenyList(),
+			b.deprecate(b.pathRoletagDenyList()),
+
+			b.pathTidyRoletagDenyList(),
+			b.deprecate(b.pathTidyRoletagDenyList()),
+
+			b.pathListIdentityAccessList(),
+			b.deprecate(b.pathListIdentityAccessList()),
+
+			b.pathIdentityAccessList(),
+			b.deprecate(b.pathIdentityAccessList()),
+
+			b.pathTidyIdentityAccessList(),
+			b.deprecate(b.pathTidyIdentityAccessList()),
 		},
 		Invalidate:     b.invalidate,
 		InitializeFunc: b.initialize,
@@ -308,6 +328,16 @@ func (b *backend) resolveArnToRealUniqueId(ctx context.Context, s logical.Storag
 	default:
 		return "", fmt.Errorf("unrecognized error type %#v", entity.Type)
 	}
+}
+
+// deprecate will return a deprecated version of a framework.Path. The will include
+// using deprecated terms in the path pattern, and marking the path as deprecated.
+func (b *backend) deprecate(path *framework.Path) *framework.Path {
+	pathDeprecated := *path
+	pathDeprecated.Pattern = b.deprecatedTerms.Replace(path.Pattern)
+	pathDeprecated.Deprecated = true
+
+	return &pathDeprecated
 }
 
 // Adapted from https://docs.aws.amazon.com/sdk-for-go/api/aws/endpoints/

@@ -213,7 +213,7 @@ func (b *backend) validateInstance(ctx context.Context, s logical.Storage, insta
 // validateMetadata matches the given client nonce and pending time with the
 // one cached in the identity whitelist during the previous login. But, if
 // reauthentication is disabled, login attempt is failed immediately.
-func validateMetadata(clientNonce, pendingTime string, storedIdentity *whitelistIdentity, roleEntry *awsRoleEntry) error {
+func validateMetadata(clientNonce, pendingTime string, storedIdentity *accessListIdentity, roleEntry *awsRoleEntry) error {
 	// For sanity
 	if !storedIdentity.DisallowReauthentication && storedIdentity.ClientNonce == "" {
 		return fmt.Errorf("client nonce missing in stored identity")
@@ -812,7 +812,7 @@ func (b *backend) pathLoginUpdateEc2(ctx context.Context, req *logical.Request, 
 	if storedIdentity == nil {
 		// Role, ClientNonce and CreationTime of the identity entry,
 		// once set, should never change.
-		storedIdentity = &whitelistIdentity{
+		storedIdentity = &accessListIdentity{
 			Role:         roleName,
 			ClientNonce:  clientNonce,
 			CreationTime: currentTime,

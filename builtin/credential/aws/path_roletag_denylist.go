@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func (b *backend) pathRoletagBlacklist() *framework.Path {
+func (b *backend) pathRoletagDenyList() *framework.Path {
 	return &framework.Path{
 		Pattern: "roletag-blacklist/(?P<role_tag>.*)",
 		Fields: map[string]*framework.FieldSchema{
@@ -38,7 +38,7 @@ to avoid any encoding problems, it can be base64 encoded.`,
 }
 
 // Path to list all the blacklisted tags.
-func (b *backend) pathListRoletagBlacklist() *framework.Path {
+func (b *backend) pathListRoletagDenyList() *framework.Path {
 	return &framework.Path{
 		Pattern: "roletag-blacklist/?",
 

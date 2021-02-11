@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func (b *backend) pathTidyRoletagBlacklist() *framework.Path {
+func (b *backend) pathTidyRoletagDenyList() *framework.Path {
 	return &framework.Path{
 		Pattern: "tidy/roletag-blacklist$",
 		Fields: map[string]*framework.FieldSchema{

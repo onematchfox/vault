@@ -250,58 +250,60 @@ func TestBackend_CreateRoleTagNonce(t *testing.T) {
 }
 
 func TestBackend_ConfigTidyIdentities(t *testing.T) {
-	// create a backend
-	config := logical.TestBackendConfig()
-	storage := &logical.InmemStorage{}
-	config.StorageView = storage
+	for _, path := range []string{"config/tidy/identity-whitelist", "config/tidy/identity-accesslist"} {
+		// create a backend
+		config := logical.TestBackendConfig()
+		storage := &logical.InmemStorage{}
+		config.StorageView = storage
 
-	b, err := Backend(config)
-	if err != nil {
-		t.Fatal(err)
-	}
+		b, err := Backend(config)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	err = b.Setup(context.Background(), config)
-	if err != nil {
-		t.Fatal(err)
-	}
+		err = b.Setup(context.Background(), config)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	// test update operation
-	tidyRequest := &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "config/tidy/identity-whitelist",
-		Storage:   storage,
-	}
-	data := map[string]interface{}{
-		"safety_buffer":         "60",
-		"disable_periodic_tidy": true,
-	}
-	tidyRequest.Data = data
-	_, err = b.HandleRequest(context.Background(), tidyRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+		// test update operation
+		tidyRequest := &logical.Request{
+			Operation: logical.UpdateOperation,
+			Path:      path,
+			Storage:   storage,
+		}
+		data := map[string]interface{}{
+			"safety_buffer":         "60",
+			"disable_periodic_tidy": true,
+		}
+		tidyRequest.Data = data
+		_, err = b.HandleRequest(context.Background(), tidyRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	// test read operation
-	tidyRequest.Operation = logical.ReadOperation
-	resp, err := b.HandleRequest(context.Background(), tidyRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp == nil || resp.IsError() {
-		t.Fatalf("failed to read config/tidy/identity-whitelist endpoint")
-	}
-	if resp.Data["safety_buffer"].(int) != 60 || !resp.Data["disable_periodic_tidy"].(bool) {
-		t.Fatalf("bad: expected: safety_buffer:60 disable_periodic_tidy:true actual: safety_buffer:%d disable_periodic_tidy:%t\n", resp.Data["safety_buffer"].(int), resp.Data["disable_periodic_tidy"].(bool))
-	}
+		// test read operation
+		tidyRequest.Operation = logical.ReadOperation
+		resp, err := b.HandleRequest(context.Background(), tidyRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp == nil || resp.IsError() {
+			t.Fatalf("failed to read %q endpoint", path)
+		}
+		if resp.Data["safety_buffer"].(int) != 60 || !resp.Data["disable_periodic_tidy"].(bool) {
+			t.Fatalf("bad: expected: safety_buffer:60 disable_periodic_tidy:true actual: safety_buffer:%d disable_periodic_tidy:%t\n", resp.Data["safety_buffer"].(int), resp.Data["disable_periodic_tidy"].(bool))
+		}
 
-	// test delete operation
-	tidyRequest.Operation = logical.DeleteOperation
-	resp, err = b.HandleRequest(context.Background(), tidyRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp != nil {
-		t.Fatalf("failed to delete config/tidy/identity-whitelist")
+		// test delete operation
+		tidyRequest.Operation = logical.DeleteOperation
+		resp, err = b.HandleRequest(context.Background(), tidyRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp != nil {
+			t.Fatalf("failed to delete %q", path)
+		}
 	}
 }
 
@@ -375,7 +377,7 @@ func TestBackend_TidyIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expiredIdentityWhitelist := &whitelistIdentity{
+	expiredIdentityWhitelist := &accessListIdentity{
 		ExpirationTime: time.Now().Add(-1 * 24 * 365 * time.Hour),
 	}
 	entry, err := logical.StorageEntryJSON("whitelist/identity/id1", expiredIdentityWhitelist)
