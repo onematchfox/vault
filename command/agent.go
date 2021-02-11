@@ -444,6 +444,7 @@ func (c *AgentCommand) Run(args []string) int {
 	default:
 	}
 
+	var leaseCache *cache.LeaseCache
 	// Parse agent listener configurations
 	if config.Cache != nil && len(config.Listeners) != 0 {
 		cacheLogger := c.logger.Named("cache")
@@ -460,7 +461,7 @@ func (c *AgentCommand) Run(args []string) int {
 
 		// Create the lease cache proxier and set its underlying proxier to
 		// the API proxier.
-		leaseCache, err := cache.NewLeaseCache(&cache.LeaseCacheConfig{
+		leaseCache, err = cache.NewLeaseCache(&cache.LeaseCacheConfig{
 			Client:      client,
 			BaseContext: ctx,
 			Proxier:     apiProxy,
@@ -599,6 +600,11 @@ func (c *AgentCommand) Run(args []string) int {
 			select {
 			case <-c.ShutdownCh:
 				c.UI.Output("==> Vault agent shutdown triggered")
+				// Let the lease cache know this is a shutdown; no need to evict
+				// everything
+				if leaseCache != nil {
+					leaseCache.SetShuttingDown(true)
+				}
 				return nil
 			case <-ctx.Done():
 				return nil

@@ -87,7 +87,12 @@ type LeaseCache struct {
 	// inflightCache keeps track of inflight requests
 	inflightCache *gocache.Cache
 
+	// ps is the persistent storage for tokens and leases
 	ps persistcache.Storage
+
+	// shuttingDown is used to determine if cache needs to be evicted or not
+	// when the context is cancelled
+	shuttingDown bool
 }
 
 // LeaseCacheConfig is the configuration for initializing a new
@@ -149,6 +154,11 @@ func NewLeaseCache(conf *LeaseCacheConfig) (*LeaseCache, error) {
 		inflightCache: gocache.New(gocache.NoExpiration, gocache.NoExpiration),
 		ps:            conf.Storage,
 	}, nil
+}
+
+// SetShuttingDown is a setter for the shuttingDown field
+func (c *LeaseCache) SetShuttingDown(in bool) {
+	c.shuttingDown = in
 }
 
 // SetPersistentStorage is a setter for the persistent storage field in
@@ -445,14 +455,16 @@ func (c *LeaseCache) createCtxInfo(ctx context.Context) *cachememdb.ContextInfo 
 func (c *LeaseCache) startRenewing(ctx context.Context, index *cachememdb.Index, req *SendRequest, secret *api.Secret) {
 	defer func() {
 		id := ctx.Value(contextIndexID).(string)
+		if c.shuttingDown {
+			c.logger.Trace("not evicting index from cache during shutdown", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
+			return
+		}
 		c.logger.Debug("evicting index from cache", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
 		err := c.Evict(id)
-		c.logger.Trace("evicted index from cache", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
 		if err != nil {
 			c.logger.Error("failed to evict index", "id", id, "error", err)
 			return
 		}
-		c.logger.Trace("finished evict defer", "id", id, "method", req.Request.Method, "path", req.Request.URL.Path)
 	}()
 
 	client, err := c.client.Clone()
@@ -907,7 +919,6 @@ func (c *LeaseCache) Set(index *cachememdb.Index, indexType persistcache.IndexTy
 // Evict removes an Index from the cachememdb, and also removes it from the
 // persistent cache (if enabled)
 func (c *LeaseCache) Evict(id string) error {
-	c.logger.Trace("going to evict index", "id", id)
 	if err := c.db.Evict(cachememdb.IndexNameID, id); err != nil {
 		return err
 	}
@@ -916,7 +927,7 @@ func (c *LeaseCache) Evict(id string) error {
 		if err := c.ps.Delete(id); err != nil {
 			return err
 		}
-		c.logger.Debug("deleted item from persistent storage", "id", id)
+		c.logger.Trace("deleted item from persistent storage", "id", id)
 	}
 
 	return nil
