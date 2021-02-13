@@ -30,7 +30,6 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/locksutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	gocache "github.com/patrickmn/go-cache"
-	"github.com/ryboe/q"
 	"go.uber.org/atomic"
 )
 
@@ -208,7 +207,6 @@ func (c *LeaseCache) checkCacheForRequest(id string) (*SendResponse, error) {
 // it will return the cached response, otherwise it will delegate to the
 // underlying Proxier and cache the received response.
 func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse, error) {
-	q.Q("got request token", req.Token) // DEBUG
 	// Compute the index ID
 	id, err := computeIndexID(req)
 	if err != nil {
@@ -300,7 +298,7 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 		Namespace:   namespace,
 		RequestPath: req.Request.URL.Path,
 	}
-	q.Q("api parsesecret", string(resp.ResponseBody)) // DEBUG
+
 	secret, err := api.ParseSecret(bytes.NewReader(resp.ResponseBody))
 	if err != nil {
 		c.logger.Error("failed to parse response as secret", "error", err)
@@ -430,7 +428,6 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 
 	// Store the index in the cache
 	c.logger.Debug("storing response into the cache", "method", req.Request.Method, "path", req.Request.URL.Path)
-	q.Q("storing in cache", index) // DEBUG
 	err = c.Set(index, indexType)
 	if err != nil {
 		c.logger.Error("failed to cache the proxied response", "error", err)
@@ -681,8 +678,8 @@ func (c *LeaseCache) handleCacheClear(ctx context.Context, in *cacheClearInput) 
 		}
 		c.l.Unlock()
 
-		// Reset the memdb instance
-		if err := c.db.Flush(); err != nil {
+		// Reset the memdb instance (and persistent storage if enabled)
+		if err := c.Flush(); err != nil {
 			return err
 		}
 		// TODO(tvoran): clear persistence here too? though everything should be
@@ -931,6 +928,19 @@ func (c *LeaseCache) Evict(id string) error {
 	return nil
 }
 
+// Flush the cachememdb and persistent cache (if enabled)
+func (c *LeaseCache) Flush() error {
+	if err := c.db.Flush(); err != nil {
+		return err
+	}
+
+	if c.ps != nil {
+		return c.ps.Clear()
+	}
+
+	return nil
+}
+
 // Restore loads the cachememdb from the persistent storage passed in. Loads
 // tokens first, since restoring a lease's renewal context and watcher requires
 // looking up the token in the cachememdb.
@@ -1013,7 +1023,6 @@ func (c *LeaseCache) ReCreateLeaseRenewCtx(index *cachememdb.Index) error {
 	}
 	secret, err := api.ParseSecret(resp.Body)
 	if err != nil {
-		// q.Q(string(sendResp.ResponseBody)) // DEBUG
 		c.logger.Error("failed to parse response as secret", "error", err)
 		return err
 	}
@@ -1021,8 +1030,6 @@ func (c *LeaseCache) ReCreateLeaseRenewCtx(index *cachememdb.Index) error {
 	var renewCtxInfo *cachememdb.ContextInfo
 	switch {
 	case secret.LeaseID != "":
-		q.Q("got a secret with a lease", secret) // DEBUG
-		// makeRenewCtxLease()
 		entry, err := c.db.Get(cachememdb.IndexNameToken, index.RequestToken)
 		if err != nil {
 			return err
@@ -1037,7 +1044,6 @@ func (c *LeaseCache) ReCreateLeaseRenewCtx(index *cachememdb.Index) error {
 		renewCtxInfo = cachememdb.NewContextInfo(entry.RenewCtxInfo.Ctx)
 
 	case secret.Auth != nil:
-		q.Q("got an auth secret", secret) // DEBUG
 		var parentCtx context.Context
 		if !secret.Auth.Orphan {
 			entry, err := c.db.Get(cachememdb.IndexNameToken, index.RequestToken)
@@ -1057,7 +1063,6 @@ func (c *LeaseCache) ReCreateLeaseRenewCtx(index *cachememdb.Index) error {
 		}
 		renewCtxInfo = c.createCtxInfo(parentCtx)
 	default:
-		q.Q("i dunno what this is", secret) // DEBUG
 		return fmt.Errorf("unknown cached index item: %s", index.ID)
 	}
 

@@ -933,8 +933,6 @@ github.com/renier/xmlrpc
 github.com/ryanuber/columnize
 # github.com/ryanuber/go-glob v1.0.0
 github.com/ryanuber/go-glob
-# github.com/ryboe/q v1.0.12
-github.com/ryboe/q
 # github.com/samuel/go-zookeeper v0.0.0-20190923202752-2cc03de413da
 github.com/samuel/go-zookeeper/zk
 # github.com/sasha-s/go-deadlock v0.2.0

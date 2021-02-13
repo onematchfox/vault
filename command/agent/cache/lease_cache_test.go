@@ -688,12 +688,13 @@ func TestLeaseCache_PersistAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 	boltStorage, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
-		Path:      tempDir,
-		TopBucket: "topbucketname",
-		Logger:    hclog.Default(),
+		Path:       tempDir,
+		RootBucket: "topbucketname",
+		Logger:     hclog.Default(),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, boltStorage)
+	defer boltStorage.Close()
 	lc := testNewLeaseCacheWithPersistence(t, responses, boltStorage)
 
 	// Register an auto-auth token so that the token and lease requests are cached
@@ -775,10 +776,25 @@ func TestLeaseCache_PersistAndRestore(t *testing.T) {
 	// Now compare before and after
 	beforeDB, err := lc.db.GetByPrefix(cachememdb.IndexNameID)
 	require.NoError(t, err)
+	assert.Len(t, beforeDB, 5)
 
 	for _, cachedItem := range beforeDB {
 		restoredItem, err := restoredCache.db.Get(cachememdb.IndexNameID, cachedItem.ID)
 		require.NoError(t, err)
+
+		assert.NoError(t, err)
+		assert.Equal(t, cachedItem.ID, restoredItem.ID)
+		assert.Equal(t, cachedItem.Lease, restoredItem.Lease)
+		assert.Equal(t, cachedItem.LeaseToken, restoredItem.LeaseToken)
+		assert.Equal(t, cachedItem.Namespace, restoredItem.Namespace)
+		assert.Equal(t, cachedItem.RequestHeader, restoredItem.RequestHeader)
+		assert.Equal(t, cachedItem.RequestMethod, restoredItem.RequestMethod)
+		assert.Equal(t, cachedItem.RequestPath, restoredItem.RequestPath)
+		assert.Equal(t, cachedItem.RequestToken, restoredItem.RequestToken)
+		assert.Equal(t, cachedItem.Response, restoredItem.Response)
+		assert.Equal(t, cachedItem.Token, restoredItem.Token)
+		assert.Equal(t, cachedItem.TokenAccessor, restoredItem.TokenAccessor)
+		assert.Equal(t, cachedItem.TokenParent, restoredItem.TokenParent)
 
 		// check what we can in the renewal context
 		assert.NotEmpty(t, restoredItem.RenewCtxInfo.CancelFunc)
@@ -788,15 +804,10 @@ func TestLeaseCache_PersistAndRestore(t *testing.T) {
 			cachedItem.RenewCtxInfo.Ctx.Value(contextIndexID),
 			restoredItem.RenewCtxInfo.Ctx.Value(contextIndexID),
 		)
-		// Clear the renewctx so comparison later is simpler. Note that these
-		// are direct references to the items in each cachememdb, so subsequent
-		// Get's will also be missing their RenewCtxInfo's.
-		cachedItem.RenewCtxInfo = nil
-		restoredItem.RenewCtxInfo = nil
 	}
 	afterDB, err := restoredCache.db.GetByPrefix(cachememdb.IndexNameID)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, beforeDB, afterDB)
+	assert.Len(t, afterDB, 5)
 
 	// And finally send the cache requests once to make sure they're all being
 	// served from the restoredCache

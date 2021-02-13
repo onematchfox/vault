@@ -20,17 +20,20 @@ const (
 // the encryption key as the top-level bucket, and then leases and tokens are
 // stored in sub buckets.
 type BoltStorage struct {
-	db        *bolt.DB
-	topBucket string
-	logger    hclog.Logger
+	db         *bolt.DB
+	rootBucket string
+	logger     hclog.Logger
+
+	// Encryption interface to be named later
+	// sekret Encryption
 }
 
 // BoltStorageConfig is the collection of input parameters for setting up bolt
 // storage
 type BoltStorageConfig struct {
-	Path      string
-	TopBucket string
-	Logger    hclog.Logger
+	Path       string
+	RootBucket string
+	Logger     hclog.Logger
 }
 
 // NewBoltStorage opens a new bolt db at the specified file path and returns it.
@@ -43,45 +46,49 @@ func NewBoltStorage(config *BoltStorageConfig) (*BoltStorage, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		top, err := tx.CreateBucketIfNotExists([]byte(config.TopBucket))
-		if err != nil {
-			return fmt.Errorf("failed to create bucket %s: %w", "topBucket", err)
-		}
-		_, err = top.CreateBucketIfNotExists([]byte(TokenType))
-		if err != nil {
-			return fmt.Errorf("failed to create token sub-bucket: %w", err)
-		}
-		_, err = top.CreateBucketIfNotExists([]byte(AuthLeaseType))
-		if err != nil {
-			return fmt.Errorf("failed to create auth lease sub-bucket: %w", err)
-		}
-		_, err = top.CreateBucketIfNotExists([]byte(SecretLeaseType))
-		if err != nil {
-			return fmt.Errorf("failed to create secret lease sub-bucket: %w", err)
-		}
-
-		// check and set file version in the top bucket
-		version := top.Get([]byte(storageVersionKey))
-		switch {
-		case version == nil:
-			err = top.Put([]byte(storageVersionKey), []byte(storageVersion))
-			if err != nil {
-				return fmt.Errorf("failed to set storage version: %w", err)
-			}
-		case string(version) != storageVersion:
-			return fmt.Errorf("storage migration from %s to %s not implemented", string(version), storageVersion)
-		}
-		return nil
+		return createBoltSchema(tx, config.RootBucket)
 	})
 	if err != nil {
 		return nil, err
 	}
 	bs := &BoltStorage{
-		db:        db,
-		topBucket: config.TopBucket,
-		logger:    config.Logger,
+		db:         db,
+		rootBucket: config.RootBucket,
+		logger:     config.Logger,
 	}
 	return bs, nil
+}
+
+func createBoltSchema(tx *bolt.Tx, rootBucketName string) error {
+	root, err := tx.CreateBucketIfNotExists([]byte(rootBucketName))
+	if err != nil {
+		return fmt.Errorf("failed to create bucket %s: %w", rootBucketName, err)
+	}
+	_, err = root.CreateBucketIfNotExists([]byte(TokenType))
+	if err != nil {
+		return fmt.Errorf("failed to create token sub-bucket: %w", err)
+	}
+	_, err = root.CreateBucketIfNotExists([]byte(AuthLeaseType))
+	if err != nil {
+		return fmt.Errorf("failed to create auth lease sub-bucket: %w", err)
+	}
+	_, err = root.CreateBucketIfNotExists([]byte(SecretLeaseType))
+	if err != nil {
+		return fmt.Errorf("failed to create secret lease sub-bucket: %w", err)
+	}
+
+	// check and set file version in the root bucket
+	version := root.Get([]byte(storageVersionKey))
+	switch {
+	case version == nil:
+		err = root.Put([]byte(storageVersionKey), []byte(storageVersion))
+		if err != nil {
+			return fmt.Errorf("failed to set storage version: %w", err)
+		}
+	case string(version) != storageVersion:
+		return fmt.Errorf("storage migration from %s to %s not implemented", string(version), storageVersion)
+	}
+	return nil
 }
 
 // Set an index in bolt storage
@@ -90,9 +97,9 @@ func (b *BoltStorage) Set(id string, index []byte, indexType string) error {
 	// TODO(tvoran): encrypt index here
 
 	return b.db.Update(func(tx *bolt.Tx) error {
-		top := tx.Bucket([]byte(b.topBucket))
+		top := tx.Bucket([]byte(b.rootBucket))
 		if top == nil {
-			return fmt.Errorf("bucket %q not found", b.topBucket)
+			return fmt.Errorf("bucket %q not found", b.rootBucket)
 		}
 		s := top.Bucket([]byte(indexType))
 		if s == nil {
@@ -105,9 +112,9 @@ func (b *BoltStorage) Set(id string, index []byte, indexType string) error {
 // Delete an index by id from bolt storage
 func (b *BoltStorage) Delete(id string) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
-		top := tx.Bucket([]byte(b.topBucket))
+		top := tx.Bucket([]byte(b.rootBucket))
 		if top == nil {
-			return fmt.Errorf("bucket %q not found", b.topBucket)
+			return fmt.Errorf("bucket %q not found", b.rootBucket)
 		}
 		// Since Delete returns a nil error if the key doesn't exist, just call
 		// delete in both sub-buckets without checking existence first
@@ -130,13 +137,13 @@ func (b *BoltStorage) GetByType(indexType string) ([][]byte, error) {
 	returnBytes := [][]byte{}
 
 	err := b.db.View(func(tx *bolt.Tx) error {
-		top := tx.Bucket([]byte(b.topBucket))
+		top := tx.Bucket([]byte(b.rootBucket))
 		if top == nil {
-			return fmt.Errorf("bucket %q not found", b.topBucket)
+			return fmt.Errorf("bucket %q not found", b.rootBucket)
 		}
 		top.Bucket([]byte(indexType)).ForEach(func(k, v []byte) error {
 
-			// TODO(tvoran): decrypt here instead of in lease_cache?
+			// TODO(tvoran): decrypt v here
 
 			returnBytes = append(returnBytes, v)
 			return nil
@@ -153,4 +160,19 @@ func (b *BoltStorage) GetByType(indexType string) ([][]byte, error) {
 func (b *BoltStorage) Close() error {
 	b.logger.Trace("closing bolt db", "file", b.db.Path())
 	return b.db.Close()
+}
+
+// Clear the boltdb by deleting all the root buckets and recreating the
+// schema/layout
+func (b *BoltStorage) Clear() error {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		tx.ForEach(func(name []byte, bucket *bolt.Bucket) error {
+			b.logger.Trace("deleting bolt bucket", "name", name)
+			if err := tx.DeleteBucket(name); err != nil {
+				return err
+			}
+			return nil
+		})
+		return createBoltSchema(tx, b.rootBucket)
+	})
 }

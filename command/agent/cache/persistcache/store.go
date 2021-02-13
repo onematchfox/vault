@@ -26,7 +26,6 @@ type Storage interface {
 	// Close the persistent storage
 	Close() error
 
-	// Clear?
-
-	// Rotate key?
+	// Clear the persistent storage
+	Clear() error
 }
