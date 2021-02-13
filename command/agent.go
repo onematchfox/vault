@@ -487,14 +487,14 @@ func (c *AgentCommand) Run(args []string) int {
 				c.UI.Error(fmt.Sprintf("Error creating persistent cache: %v", err))
 				return 1
 			}
-			c.logger.Info("configured persistent storage", "path", config.Cache.Snapshot.Path)
+			cacheLogger.Info("configured persistent storage", "path", config.Cache.Snapshot.Path)
 
 			// Restore anything in the persistent cache to the memory cache
 			if err := leaseCache.Restore(ps); err != nil {
 				c.UI.Error(fmt.Sprintf("Error restoring in-memory cache from persisted file: %v", err))
 				return 1
 			}
-			c.logger.Info("loaded memcache from persistent storage")
+			cacheLogger.Info("loaded memcache from persistent storage")
 
 			// Remove the cache file if specified
 			if config.Cache.Snapshot.RemoveAfterImport {
@@ -502,8 +502,8 @@ func (c *AgentCommand) Run(args []string) int {
 					c.UI.Error(fmt.Sprintf("failed to close persistent cache file: %s", err))
 					return 1
 				}
-				if err := os.Remove(config.Cache.Snapshot.Path); err != nil {
-					c.UI.Error(fmt.Sprintf("failed to remove persistent storage file"))
+				if err := os.RemoveAll(config.Cache.Snapshot.Path); err != nil {
+					c.UI.Warn(fmt.Sprintf("failed to remove persistent storage file"))
 				}
 			} else {
 				defer ps.Close()

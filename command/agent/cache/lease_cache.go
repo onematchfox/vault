@@ -336,7 +336,7 @@ func (c *LeaseCache) Send(ctx context.Context, req *SendRequest) (*SendResponse,
 	}
 
 	var renewCtxInfo *cachememdb.ContextInfo
-	var indexType persistcache.IndexType
+	var indexType string
 	switch {
 	case secret.LeaseID != "":
 		c.logger.Trace("processing lease response", "method", req.Request.Method, "path", req.Request.URL.Path)
@@ -894,7 +894,7 @@ func (c *LeaseCache) handleRevocationRequest(ctx context.Context, req *SendReque
 
 // Set stores the index in the cachememdb, and also stores it in the persistent
 // cache (if enabled)
-func (c *LeaseCache) Set(index *cachememdb.Index, indexType persistcache.IndexType) error {
+func (c *LeaseCache) Set(index *cachememdb.Index, indexType string) error {
 	if err := c.db.Set(index); err != nil {
 		return err
 	}
@@ -904,8 +904,6 @@ func (c *LeaseCache) Set(index *cachememdb.Index, indexType persistcache.IndexTy
 		if err != nil {
 			return err
 		}
-
-		// TODO(tvoran): encrypt here before setting in storage
 
 		if err := c.ps.Set(index.ID, b, indexType); err != nil {
 			return err

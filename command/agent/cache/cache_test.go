@@ -219,7 +219,7 @@ func TestCache_AutoAuthTokenStripping(t *testing.T) {
 		newTestSendResponse(http.StatusOK, response2),
 	}
 
-	leaseCache := testNewLeaseCache(t, responses, nil)
+	leaseCache := testNewLeaseCache(t, responses)
 
 	cluster := vault.NewTestCluster(t, nil, &vault.TestClusterOptions{
 		HandlerFunc: vaulthttp.Handler,

@@ -21,7 +21,7 @@ func NewMapStorage() *MapStorage {
 }
 
 // Set an index in the mapstorage
-func (ms *MapStorage) Set(id string, index []byte, indexType IndexType) error {
+func (ms *MapStorage) Set(id string, index []byte, indexType string) error {
 	switch indexType {
 	case SecretLeaseType:
 		ms.secretLeases[id] = index
@@ -55,7 +55,7 @@ func (ms *MapStorage) Delete(id string) error {
 }
 
 // GetByType returns a list of stored items by type
-func (ms *MapStorage) GetByType(indexType IndexType) ([][]byte, error) {
+func (ms *MapStorage) GetByType(indexType string) ([][]byte, error) {
 	returnBytes := [][]byte{}
 
 	switch indexType {

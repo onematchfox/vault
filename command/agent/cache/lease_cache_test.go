@@ -3,9 +3,11 @@ package cache
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -25,7 +27,7 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/logging"
 )
 
-func testNewLeaseCache(t *testing.T, responses []*SendResponse, storage persistcache.Storage) *LeaseCache {
+func testNewLeaseCache(t *testing.T, responses []*SendResponse) *LeaseCache {
 	t.Helper()
 
 	client, err := api.NewClient(api.DefaultConfig())
@@ -38,7 +40,6 @@ func testNewLeaseCache(t *testing.T, responses []*SendResponse, storage persistc
 		BaseContext: context.Background(),
 		Proxier:     newMockProxier(responses),
 		Logger:      logging.NewVaultLogger(hclog.Trace).Named("cache.leasecache"),
-		Storage:     storage,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +65,24 @@ func testNewLeaseCacheWithDelay(t *testing.T, cacheable bool, delay int) *LeaseC
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	return lc
+}
+
+func testNewLeaseCacheWithPersistence(t *testing.T, responses []*SendResponse, storage persistcache.Storage) *LeaseCache {
+	t.Helper()
+
+	client, err := api.NewClient(api.DefaultConfig())
+	require.NoError(t, err)
+
+	lc, err := NewLeaseCache(&LeaseCacheConfig{
+		Client:      client,
+		BaseContext: context.Background(),
+		Proxier:     newMockProxier(responses),
+		Logger:      logging.NewVaultLogger(hclog.Trace).Named("cache.leasecache"),
+		Storage:     storage,
+	})
+	require.NoError(t, err)
 
 	return lc
 }
@@ -109,7 +128,7 @@ func TestLeaseCache_EmptyToken(t *testing.T) {
 	responses := []*SendResponse{
 		newTestSendResponse(http.StatusCreated, `{"value": "invalid", "auth": {"client_token": "testtoken"}}`),
 	}
-	lc := testNewLeaseCache(t, responses, nil)
+	lc := testNewLeaseCache(t, responses)
 
 	// Even if the send request doesn't have a token on it, a successful
 	// cacheable response should result in the index properly getting populated
@@ -135,7 +154,7 @@ func TestLeaseCache_SendCacheable(t *testing.T) {
 		newTestSendResponse(http.StatusOK, `{"lease_id": "foo", "renewable": true, "data": {"value": "foo"}}`),
 	}
 
-	lc := testNewLeaseCache(t, responses, nil)
+	lc := testNewLeaseCache(t, responses)
 	// Register an token so that the token and lease requests are cached
 	lc.RegisterAutoAuthToken("autoauthtoken")
 
@@ -216,7 +235,7 @@ func TestLeaseCache_SendNonCacheable(t *testing.T) {
 		newTestSendResponse(http.StatusTemporaryRedirect, ""),
 	}
 
-	lc := testNewLeaseCache(t, responses, nil)
+	lc := testNewLeaseCache(t, responses)
 
 	// Send a request through the lease cache which is not cacheable (there is
 	// no lease information or auth information in the response)
@@ -280,7 +299,7 @@ func TestLeaseCache_SendNonCacheableNonTokenLease(t *testing.T) {
 		newTestSendResponse(http.StatusOK, `{"value": "output", "lease_id": "foo"}`),
 		newTestSendResponse(http.StatusCreated, `{"value": "invalid", "auth": {"client_token": "testtoken"}}`),
 	}
-	lc := testNewLeaseCache(t, responses, nil)
+	lc := testNewLeaseCache(t, responses)
 
 	// Send a request through lease cache which returns a response containing
 	// lease_id. Response will not be cached because it doesn't belong to a
@@ -330,7 +349,7 @@ func TestLeaseCache_SendNonCacheableNonTokenLease(t *testing.T) {
 }
 
 func TestLeaseCache_HandleCacheClear(t *testing.T) {
-	lc := testNewLeaseCache(t, nil, nil)
+	lc := testNewLeaseCache(t, nil)
 
 	handler := lc.HandleCacheClear(context.Background())
 	ts := httptest.NewServer(handler)
@@ -655,114 +674,113 @@ func TestLeaseCache_Concurrent_Cacheable(t *testing.T) {
 	}
 }
 
-func TestLeaseCache_CacheAndRestore(t *testing.T) {
-	// Emulate 2 responses from the api proxy. One returns a new token and the
-	// other returns a lease.
+func TestLeaseCache_PersistAndRestore(t *testing.T) {
+	// Emulate 4 responses from the api proxy. The first two use the auto-auth
+	// token, and the last two use another token.
 	responses := []*SendResponse{
-		newTestSendResponse(http.StatusCreated, `{"auth": {"client_token": "testtoken", "renewable": true}}`),
-		newTestSendResponse(http.StatusOK, `{"lease_id": "foo", "renewable": true, "data": {"value": "foo"}}`),
+		newTestSendResponse(200, `{"auth": {"client_token": "testtoken", "renewable": true}}`),
+		newTestSendResponse(201, `{"lease_id": "foo", "renewable": true, "data": {"value": "foo"}}`),
+		newTestSendResponse(202, `{"auth": {"client_token": "testtoken2", "renewable": true, "orphan": true}}`),
+		newTestSendResponse(203, `{"lease_id": "secret2-lease", "renewable": true, "data": {"number": "two"}}`),
 	}
 
-	// stor := persistcache.NewMapStorage()
-	// lc := testNewLeaseCache(t, responses, stor)
-	b, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
-		Path:      "/tmp/mybolt.db",
+	tempDir, err := ioutil.TempDir("", "agent-cache-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+	boltStorage, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
+		Path:      tempDir,
 		TopBucket: "topbucketname",
 		Logger:    hclog.Default(),
 	})
 	require.NoError(t, err)
-	require.NotNil(t, b)
-	lc := testNewLeaseCache(t, responses, b)
+	require.NotNil(t, boltStorage)
+	lc := testNewLeaseCacheWithPersistence(t, responses, boltStorage)
 
-	// Register an token so that the token and lease requests are cached
+	// Register an auto-auth token so that the token and lease requests are cached
 	lc.RegisterAutoAuthToken("autoauthtoken")
 
-	// Make a request. A response with a new token is returned to the lease
-	// cache and that will be cached.
-	urlPath := "http://example.com/v1/sample/api"
-	sendReq := &SendRequest{
-		Token:   "autoauthtoken",
-		Request: httptest.NewRequest("GET", urlPath, strings.NewReader(`{"value": "input"}`)),
-	}
-	resp, err := lc.Send(context.Background(), sendReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := deep.Equal(resp.Response.StatusCode, responses[0].Response.StatusCode); diff != nil {
-		t.Fatalf("expected getting proxied response: got %v", diff)
-	}
-
-	// Send the same request again to get the cached response
-	sendReq = &SendRequest{
-		Token:   "autoauthtoken",
-		Request: httptest.NewRequest("GET", urlPath, strings.NewReader(`{"value": "input"}`)),
-	}
-	resp, err = lc.Send(context.Background(), sendReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := deep.Equal(resp.Response.StatusCode, responses[0].Response.StatusCode); diff != nil {
-		t.Fatalf("expected getting proxied response: got %v", diff)
-	}
-
-	// Modify the request a little bit to ensure the second response is
-	// returned to the lease cache.
-	sendReq = &SendRequest{
-		Token:   "autoauthtoken",
-		Request: httptest.NewRequest("GET", urlPath, strings.NewReader(`{"value": "input_changed"}`)),
-	}
-	resp, err = lc.Send(context.Background(), sendReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := deep.Equal(resp.Response.StatusCode, responses[1].Response.StatusCode); diff != nil {
-		t.Fatalf("expected getting proxied response: got %v", diff)
-	}
-
-	// Make the same request again and ensure that the same response is returned
-	// again.
-	sendReq = &SendRequest{
-		Token:   "autoauthtoken",
-		Request: httptest.NewRequest("GET", urlPath, strings.NewReader(`{"value": "input_changed"}`)),
-	}
-	resp, err = lc.Send(context.Background(), sendReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := deep.Equal(resp.Response.StatusCode, responses[1].Response.StatusCode); diff != nil {
-		t.Fatalf("expected getting proxied response: got %v", diff)
+	cacheTests := []struct {
+		token          string
+		method         string
+		urlPath        string
+		body           string
+		wantStatusCode int
+	}{
+		{
+			// Make a request. A response with a new token is returned to the
+			// lease cache and that will be cached.
+			token:          "autoauthtoken",
+			method:         "GET",
+			urlPath:        "http://example.com/v1/sample/api",
+			body:           `{"value": "input"}`,
+			wantStatusCode: responses[0].Response.StatusCode,
+		},
+		{
+			// Modify the request a little bit to ensure the second response is
+			// returned to the lease cache.
+			token:          "autoauthtoken",
+			method:         "GET",
+			urlPath:        "http://example.com/v1/sample/api",
+			body:           `{"value": "input_changed"}`,
+			wantStatusCode: responses[1].Response.StatusCode,
+		},
+		{
+			// Simulate an approle login to get another token
+			method:         "PUT",
+			urlPath:        "http://example.com/v1/auth/approle/login",
+			body:           `{"role_id": "my role", "secret_id": "my secret"}`,
+			wantStatusCode: responses[2].Response.StatusCode,
+		},
+		{
+			// Test caching with the token acquired from the approle login
+			token:          "testtoken2",
+			method:         "GET",
+			urlPath:        "http://example.com/v1/sample2/api",
+			body:           `{"second": "input"}`,
+			wantStatusCode: responses[3].Response.StatusCode,
+		},
 	}
 
-	// Now we know the cache is working, so try restoring from the persisted cache
-	// q.Q(stor) // DEBUG
-	// q.Q(b) // DEBUG - this segfault's
+	for _, ct := range cacheTests {
+		// Send once to cache
+		sendReq := &SendRequest{
+			Token:   ct.token,
+			Request: httptest.NewRequest(ct.method, ct.urlPath, strings.NewReader(ct.body)),
+		}
+		resp, err := lc.Send(context.Background(), sendReq)
+		require.NoError(t, err)
+		assert.Equal(t, resp.Response.StatusCode, ct.wantStatusCode, "expected proxied response")
+		assert.Nil(t, resp.CacheMeta)
 
-	restoredCache := testNewLeaseCache(t, nil, nil)
+		// Send again to test cache. If this isn't cached, the response returned
+		// will be the next in the list and the status code will not match.
+		sendCacheReq := &SendRequest{
+			Token:   ct.token,
+			Request: httptest.NewRequest(ct.method, ct.urlPath, strings.NewReader(ct.body)),
+		}
+		respCached, err := lc.Send(context.Background(), sendCacheReq)
+		require.NoError(t, err, "failed to send request %+v", ct)
+		assert.Equal(t, respCached.Response.StatusCode, ct.wantStatusCode, "expected proxied response")
+		require.NotNil(t, respCached.CacheMeta)
+		assert.True(t, respCached.CacheMeta.Hit)
+	}
 
-	// err = restoredCache.Restore(stor)
-	err = restoredCache.Restore(b)
+	// Now we know the cache is working, so try restoring from the persisted
+	// cache's storage
+	restoredCache := testNewLeaseCache(t, nil)
+
+	err = restoredCache.Restore(boltStorage)
 	assert.NoError(t, err)
 
 	// Now compare before and after
 	beforeDB, err := lc.db.GetByPrefix(cachememdb.IndexNameID)
-	assert.NoError(t, err)
-	assert.Len(t, beforeDB, 3)
+	require.NoError(t, err)
+
 	for _, cachedItem := range beforeDB {
 		restoredItem, err := restoredCache.db.Get(cachememdb.IndexNameID, cachedItem.ID)
-		assert.NoError(t, err)
-		assert.Equal(t, cachedItem.ID, restoredItem.ID)
-		assert.Equal(t, cachedItem.Lease, restoredItem.Lease)
-		assert.Equal(t, cachedItem.LeaseToken, restoredItem.LeaseToken)
-		assert.Equal(t, cachedItem.Namespace, restoredItem.Namespace)
-		assert.Equal(t, cachedItem.RequestHeader, restoredItem.RequestHeader)
-		assert.Equal(t, cachedItem.RequestMethod, restoredItem.RequestMethod)
-		assert.Equal(t, cachedItem.RequestPath, restoredItem.RequestPath)
-		assert.Equal(t, cachedItem.RequestToken, restoredItem.RequestToken)
-		assert.Equal(t, cachedItem.Response, restoredItem.Response)
-		assert.Equal(t, cachedItem.Token, restoredItem.Token)
-		assert.Equal(t, cachedItem.TokenAccessor, restoredItem.TokenAccessor)
-		assert.Equal(t, cachedItem.TokenParent, restoredItem.TokenParent)
+		require.NoError(t, err)
 
+		// check what we can in the renewal context
 		assert.NotEmpty(t, restoredItem.RenewCtxInfo.CancelFunc)
 		assert.NotZero(t, restoredItem.RenewCtxInfo.DoneCh)
 		require.NotEmpty(t, restoredItem.RenewCtxInfo.Ctx)
@@ -770,10 +788,27 @@ func TestLeaseCache_CacheAndRestore(t *testing.T) {
 			cachedItem.RenewCtxInfo.Ctx.Value(contextIndexID),
 			restoredItem.RenewCtxInfo.Ctx.Value(contextIndexID),
 		)
+		// Clear the renewctx so comparison later is simpler. Note that these
+		// are direct references to the items in each cachememdb, so subsequent
+		// Get's will also be missing their RenewCtxInfo's.
+		cachedItem.RenewCtxInfo = nil
+		restoredItem.RenewCtxInfo = nil
 	}
 	afterDB, err := restoredCache.db.GetByPrefix(cachememdb.IndexNameID)
-	assert.NoError(t, err)
-	// assert.ElementsMatch(t, beforeDB, afterDB)
-	assert.Len(t, afterDB, 3)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, beforeDB, afterDB)
 
+	// And finally send the cache requests once to make sure they're all being
+	// served from the restoredCache
+	for _, ct := range cacheTests {
+		sendCacheReq := &SendRequest{
+			Token:   ct.token,
+			Request: httptest.NewRequest(ct.method, ct.urlPath, strings.NewReader(ct.body)),
+		}
+		respCached, err := restoredCache.Send(context.Background(), sendCacheReq)
+		require.NoError(t, err, "failed to send request %+v", ct)
+		assert.Equal(t, respCached.Response.StatusCode, ct.wantStatusCode, "expected proxied response")
+		require.NotNil(t, respCached.CacheMeta)
+		assert.True(t, respCached.CacheMeta.Hit)
+	}
 }

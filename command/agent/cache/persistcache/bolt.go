@@ -2,6 +2,8 @@ package persistcache
 
 import (
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	bolt "go.etcd.io/bbolt"
@@ -10,7 +12,8 @@ import (
 // Keep track of schema version for future migrations
 const (
 	storageVersionKey = "version"
-	storageVersion    = "v1"
+	storageVersion    = "1"
+	cacheFileName     = "vault-agent-cache.db"
 )
 
 // BoltStorage is a persistent cache using a bolt db. Items are organized with
@@ -34,7 +37,8 @@ type BoltStorageConfig struct {
 // If the db already exists the buckets will just be created if they don't
 // exist.
 func NewBoltStorage(config *BoltStorageConfig) (*BoltStorage, error) {
-	db, err := bolt.Open(config.Path, 0600, nil)
+	cachePath := filepath.Join(config.Path, cacheFileName)
+	db, err := bolt.Open(cachePath, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		return nil, err
 	}
@@ -81,9 +85,9 @@ func NewBoltStorage(config *BoltStorageConfig) (*BoltStorage, error) {
 }
 
 // Set an index in bolt storage
-func (b *BoltStorage) Set(id string, index []byte, indexType IndexType) error {
+func (b *BoltStorage) Set(id string, index []byte, indexType string) error {
 
-	// TODO(tvoran): encrypt here instead of in lease_cache layer?
+	// TODO(tvoran): encrypt index here
 
 	return b.db.Update(func(tx *bolt.Tx) error {
 		top := tx.Bucket([]byte(b.topBucket))
@@ -122,7 +126,7 @@ func (b *BoltStorage) Delete(id string) error {
 }
 
 // GetByType returns a list of stored items of the specified type
-func (b *BoltStorage) GetByType(indexType IndexType) ([][]byte, error) {
+func (b *BoltStorage) GetByType(indexType string) ([][]byte, error) {
 	returnBytes := [][]byte{}
 
 	err := b.db.View(func(tx *bolt.Tx) error {
