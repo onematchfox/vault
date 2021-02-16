@@ -674,6 +674,22 @@ func TestLeaseCache_Concurrent_Cacheable(t *testing.T) {
 	}
 }
 
+func setupBoltStorage(t *testing.T) (tempCacheDir string, boltStorage *persistcache.BoltStorage) {
+	t.Helper()
+
+	tempCacheDir, err := ioutil.TempDir("", "agent-cache-test")
+	require.NoError(t, err)
+	boltStorage, err = persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
+		Path:       tempCacheDir,
+		RootBucket: "topbucketname",
+		Logger:     hclog.Default(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, boltStorage)
+	// The calling function should `defer boltStorage.Close()` and `defer os.RemoveAll(tempCacheDir)`
+	return tempCacheDir, boltStorage
+}
+
 func TestLeaseCache_PersistAndRestore(t *testing.T) {
 	// Emulate 4 responses from the api proxy. The first two use the auto-auth
 	// token, and the last two use another token.
@@ -684,16 +700,8 @@ func TestLeaseCache_PersistAndRestore(t *testing.T) {
 		newTestSendResponse(203, `{"lease_id": "secret2-lease", "renewable": true, "data": {"number": "two"}}`),
 	}
 
-	tempDir, err := ioutil.TempDir("", "agent-cache-test")
-	require.NoError(t, err)
+	tempDir, boltStorage := setupBoltStorage(t)
 	defer os.RemoveAll(tempDir)
-	boltStorage, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
-		Path:       tempDir,
-		RootBucket: "topbucketname",
-		Logger:     hclog.Default(),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, boltStorage)
 	defer boltStorage.Close()
 	lc := testNewLeaseCacheWithPersistence(t, responses, boltStorage)
 
@@ -770,7 +778,7 @@ func TestLeaseCache_PersistAndRestore(t *testing.T) {
 	// cache's storage
 	restoredCache := testNewLeaseCache(t, nil)
 
-	err = restoredCache.Restore(boltStorage)
+	err := restoredCache.Restore(boltStorage)
 	assert.NoError(t, err)
 
 	// Now compare before and after
@@ -822,4 +830,46 @@ func TestLeaseCache_PersistAndRestore(t *testing.T) {
 		require.NotNil(t, respCached.CacheMeta)
 		assert.True(t, respCached.CacheMeta.Hit)
 	}
+}
+
+func TestEvictPersistent(t *testing.T) {
+	responses := []*SendResponse{
+		newTestSendResponse(201, `{"lease_id": "foo", "renewable": true, "data": {"value": "foo"}}`),
+	}
+
+	tempDir, boltStorage := setupBoltStorage(t)
+	defer os.RemoveAll(tempDir)
+	defer boltStorage.Close()
+	lc := testNewLeaseCacheWithPersistence(t, responses, boltStorage)
+
+	lc.RegisterAutoAuthToken("autoauthtoken")
+
+	// populate cache by sending request through
+	sendReq := &SendRequest{
+		Token:   "autoauthtoken",
+		Request: httptest.NewRequest("GET", "http://example.com/v1/sample/api", strings.NewReader(`{"value": "some_input"}`)),
+	}
+	resp, err := lc.Send(context.Background(), sendReq)
+	require.NoError(t, err)
+	assert.Equal(t, resp.Response.StatusCode, 201, "expected proxied response")
+	assert.Nil(t, resp.CacheMeta)
+
+	// Check bolt for the cached lease
+	secrets, err := lc.ps.GetByType(persistcache.SecretLeaseType)
+	require.NoError(t, err)
+	assert.Len(t, secrets, 1)
+
+	// Call clear for the request path
+	err = lc.handleCacheClear(context.Background(), &cacheClearInput{
+		Type:        "request_path",
+		RequestPath: "/v1/sample/api",
+	})
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Second)
+
+	// Check that cached item is gone
+	secrets, err = lc.ps.GetByType(persistcache.SecretLeaseType)
+	require.NoError(t, err)
+	assert.Len(t, secrets, 0)
 }

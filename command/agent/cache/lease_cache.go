@@ -682,9 +682,6 @@ func (c *LeaseCache) handleCacheClear(ctx context.Context, in *cacheClearInput) 
 		if err := c.Flush(); err != nil {
 			return err
 		}
-		// TODO(tvoran): clear persistence here too? though everything should be
-		// evicted when the context is cancelled. though might be a good
-		// maintenance function.
 
 	default:
 		return errInvalidType

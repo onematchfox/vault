@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -479,9 +480,9 @@ func (c *AgentCommand) Run(args []string) int {
 				return 1
 			}
 			ps, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
-				Path:      config.Cache.Snapshot.Path,
-				TopBucket: "insert key hash here",
-				Logger:    cacheLogger.Named("persistcache"),
+				Path:       config.Cache.Snapshot.Path,
+				RootBucket: "insert key hash here",
+				Logger:     cacheLogger.Named("persistcache"),
 			})
 			if err != nil {
 				c.UI.Error(fmt.Sprintf("Error creating persistent cache: %v", err))
@@ -502,8 +503,9 @@ func (c *AgentCommand) Run(args []string) int {
 					c.UI.Error(fmt.Sprintf("failed to close persistent cache file: %s", err))
 					return 1
 				}
-				if err := os.RemoveAll(config.Cache.Snapshot.Path); err != nil {
-					c.UI.Warn(fmt.Sprintf("failed to remove persistent storage file"))
+				cacheFile := filepath.Join(config.Cache.Snapshot.Path, persistcache.CacheFileName)
+				if err := os.Remove(cacheFile); err != nil {
+					c.UI.Warn(fmt.Sprintf("failed to remove persistent storage file %s: %s", cacheFile, err))
 				}
 			} else {
 				defer ps.Close()

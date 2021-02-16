@@ -9,11 +9,13 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// Keep track of schema version for future migrations
 const (
+	// Keep track of schema version for future migrations
 	storageVersionKey = "version"
 	storageVersion    = "1"
-	cacheFileName     = "vault-agent-cache.db"
+
+	// CacheFileName - filename for the persistent cache file
+	CacheFileName = "vault-agent-cache.db"
 )
 
 // BoltStorage is a persistent cache using a bolt db. Items are organized with
@@ -40,7 +42,7 @@ type BoltStorageConfig struct {
 // If the db already exists the buckets will just be created if they don't
 // exist.
 func NewBoltStorage(config *BoltStorageConfig) (*BoltStorage, error) {
-	cachePath := filepath.Join(config.Path, cacheFileName)
+	cachePath := filepath.Join(config.Path, CacheFileName)
 	db, err := bolt.Open(cachePath, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		return nil, err
