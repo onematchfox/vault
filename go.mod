@@ -79,7 +79,7 @@ require (
 	github.com/hashicorp/vault-plugin-auth-centrify v0.7.0
 	github.com/hashicorp/vault-plugin-auth-cf v0.7.0
 	github.com/hashicorp/vault-plugin-auth-gcp v0.8.0
-	github.com/hashicorp/vault-plugin-auth-jwt v0.7.2-0.20201203001230-e35700fcc0d5
+	github.com/hashicorp/vault-plugin-auth-jwt v0.7.2-0.20210212182451-0d0819f8e5e3
 	github.com/hashicorp/vault-plugin-auth-kerberos v0.2.0
 	github.com/hashicorp/vault-plugin-auth-kubernetes v0.8.0
 	github.com/hashicorp/vault-plugin-auth-oci v0.6.0
@@ -113,7 +113,7 @@ require (
 	github.com/mitchellh/cli v1.1.1
 	github.com/mitchellh/copystructure v1.0.0
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/mitchellh/go-testing-interface v1.0.0
+	github.com/mitchellh/go-testing-interface v1.14.0
 	github.com/mitchellh/gox v1.0.1
 	github.com/mitchellh/mapstructure v1.3.3
 	github.com/mitchellh/reflectwalk v1.0.1
