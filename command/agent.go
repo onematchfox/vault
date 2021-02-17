@@ -675,6 +675,7 @@ func (c *AgentCommand) Run(args []string) int {
 		g.Add(func() error {
 			return ah.Run(ctx, method)
 		}, func(error) {
+			leaseCache.SetShuttingDown(true)
 			cancelFunc()
 		})
 
@@ -701,12 +702,14 @@ func (c *AgentCommand) Run(args []string) int {
 
 			return err
 		}, func(error) {
+			leaseCache.SetShuttingDown(true)
 			cancelFunc()
 		})
 
 		g.Add(func() error {
 			return ts.Run(ctx, ah.TemplateTokenCh, config.Templates)
 		}, func(error) {
+			leaseCache.SetShuttingDown(true)
 			cancelFunc()
 			ts.Stop()
 		})
