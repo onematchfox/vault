@@ -48,13 +48,14 @@ type Cache struct {
 	UseAutoAuthTokenRaw interface{} `hcl:"use_auto_auth_token"`
 	UseAutoAuthToken    bool        `hcl:"-"`
 	ForceAutoAuthToken  bool        `hcl:"-"`
-	Snapshot            *Snapshot   `hcl:"snapshot"`
+	Persist             *Persist    `hcl:"persist"`
 }
 
-// Snapshot contains configuration needed for persistent caching
-type Snapshot struct {
-	RemoveAfterImport bool   `hcl:"remove_after_import"`
+// Persist contains configuration needed for persistent caching
+type Persist struct {
 	Path              string `hcl:"path"`
+	RemoveAfterImport bool   `hcl:"remove_after_import"`
+	ExitOnErr         bool   `hcl:"exit_on_err"`
 }
 
 // AutoAuth is the configured authentication method and sinks
@@ -319,34 +320,34 @@ func parseCache(result *Config, list *ast.ObjectList) error {
 		return fmt.Errorf("could not parse %q as an object", name)
 	}
 	subList := subs.List
-	if err := parseSnapshot(result, subList); err != nil {
-		return fmt.Errorf("error parsing snapshot: %w", err)
+	if err := parsePersist(result, subList); err != nil {
+		return fmt.Errorf("error parsing persist: %w", err)
 	}
 
 	return nil
 }
 
-func parseSnapshot(result *Config, list *ast.ObjectList) error {
-	name := "snapshot"
+func parsePersist(result *Config, list *ast.ObjectList) error {
+	name := "persist"
 
-	snapshotList := list.Filter(name)
-	if len(snapshotList.Items) == 0 {
+	persistList := list.Filter(name)
+	if len(persistList.Items) == 0 {
 		return nil
 	}
 
-	if len(snapshotList.Items) > 1 {
+	if len(persistList.Items) > 1 {
 		return fmt.Errorf("only one %q block is required", name)
 	}
 
-	item := snapshotList.Items[0]
+	item := persistList.Items[0]
 
-	var s Snapshot
+	var s Persist
 	err := hcl.DecodeObject(&s, item.Val)
 	if err != nil {
 		return err
 	}
 
-	result.Cache.Snapshot = &s
+	result.Cache.Persist = &s
 	return nil
 }
 

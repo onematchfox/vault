@@ -66,9 +66,10 @@ func TestLoadConfigFile_AgentCache(t *testing.T) {
 			UseAutoAuthToken:    true,
 			UseAutoAuthTokenRaw: true,
 			ForceAutoAuthToken:  false,
-			Snapshot: &Snapshot{
-				RemoveAfterImport: true,
+			Persist: &Persist{
 				Path:              "/tmp/bolt-file.db",
+				RemoveAfterImport: true,
+				ExitOnErr:         true,
 			},
 		},
 		Vault: &Vault{
@@ -447,17 +448,18 @@ func TestLoadConfigFile_AgentCache_AutoAuth_False(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFile_AgentCache_Snapshot(t *testing.T) {
-	config, err := LoadConfig("./test-fixtures/config-cache-export-false.hcl")
+func TestLoadConfigFile_AgentCache_Persist(t *testing.T) {
+	config, err := LoadConfig("./test-fixtures/config-cache-persist-false.hcl")
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
 
 	expected := &Config{
 		Cache: &Cache{
-			Snapshot: &Snapshot{
-				RemoveAfterImport: false,
+			Persist: &Persist{
 				Path:              "/tmp/bolt-file.db",
+				RemoveAfterImport: false,
+				ExitOnErr:         false,
 			},
 		},
 		SharedConfig: &configutil.SharedConfig{
@@ -478,7 +480,7 @@ func TestLoadConfigFile_AgentCache_Snapshot(t *testing.T) {
 	}
 
 	// Blank export should be the same as export = false
-	config, err = LoadConfig("./test-fixtures/config-cache-export-blank.hcl")
+	config, err = LoadConfig("./test-fixtures/config-cache-persist-blank.hcl")
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}

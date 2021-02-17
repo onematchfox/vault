@@ -474,38 +474,45 @@ func (c *AgentCommand) Run(args []string) int {
 		}
 
 		// Configure persistent storage and add to LeaseCache
-		if config.Cache.Snapshot != nil {
-			if config.Cache.Snapshot.Path == "" {
+		if config.Cache.Persist != nil {
+			if config.Cache.Persist.Path == "" {
 				c.UI.Error("must specify persistent cache path")
 				return 1
 			}
 			ps, err := persistcache.NewBoltStorage(&persistcache.BoltStorageConfig{
-				Path:       config.Cache.Snapshot.Path,
-				RootBucket: "insert key hash here",
+				Path:       config.Cache.Persist.Path,
+				RootBucket: "<insert key hash here>",
 				Logger:     cacheLogger.Named("persistcache"),
 			})
 			if err != nil {
 				c.UI.Error(fmt.Sprintf("Error creating persistent cache: %v", err))
 				return 1
 			}
-			cacheLogger.Info("configured persistent storage", "path", config.Cache.Snapshot.Path)
+			cacheLogger.Info("configured persistent storage", "path", config.Cache.Persist.Path)
 
 			// Restore anything in the persistent cache to the memory cache
 			if err := leaseCache.Restore(ps); err != nil {
 				c.UI.Error(fmt.Sprintf("Error restoring in-memory cache from persisted file: %v", err))
-				return 1
+				if config.Cache.Persist.ExitOnErr {
+					return 1
+				}
 			}
 			cacheLogger.Info("loaded memcache from persistent storage")
 
 			// Remove the cache file if specified
-			if config.Cache.Snapshot.RemoveAfterImport {
+			if config.Cache.Persist.RemoveAfterImport {
 				if err := ps.Close(); err != nil {
 					c.UI.Error(fmt.Sprintf("failed to close persistent cache file: %s", err))
-					return 1
+					if config.Cache.Persist.ExitOnErr {
+						return 1
+					}
 				}
-				cacheFile := filepath.Join(config.Cache.Snapshot.Path, persistcache.CacheFileName)
+				cacheFile := filepath.Join(config.Cache.Persist.Path, persistcache.CacheFileName)
 				if err := os.Remove(cacheFile); err != nil {
-					c.UI.Warn(fmt.Sprintf("failed to remove persistent storage file %s: %s", cacheFile, err))
+					c.UI.Error(fmt.Sprintf("failed to remove persistent storage file %s: %s", cacheFile, err))
+					if config.Cache.Persist.ExitOnErr {
+						return 1
+					}
 				}
 			} else {
 				defer ps.Close()
@@ -626,6 +633,7 @@ func (c *AgentCommand) Run(args []string) int {
 			EnableReauthOnNewCredentials: config.AutoAuth.EnableReauthOnNewCredentials,
 			EnableTemplateTokenCh:        enableTokenCh,
 		})
+		// TODO(tvoran): set Token in AuthHandlerConfig if restored above
 
 		ss := sink.NewSinkServer(&sink.SinkServerConfig{
 			Logger:        c.logger.Named("sink.server"),

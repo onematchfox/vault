@@ -21,9 +21,10 @@ auto_auth {
 
 cache {
 	use_auto_auth_token = true
-	snapshot = {
-		remove_after_import = true
+	persist = {
 		path = "/tmp/bolt-file.db"
+		remove_after_import = true
+		exit_on_err = true
 	}
 }
 

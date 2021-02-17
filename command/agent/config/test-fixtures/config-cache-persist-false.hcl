@@ -1,7 +1,9 @@
 pid_file = "./pidfile"
 
 cache {
-    snapshot = {
+    persist = {
+        exit_on_err = false
+        remove_after_import = false
         path = "/tmp/bolt-file.db"
     }
 }
