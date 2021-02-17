@@ -107,8 +107,32 @@ func (b *BoltStorage) Set(id string, index []byte, indexType string) error {
 		if s == nil {
 			return fmt.Errorf("bucket %q not found", indexType)
 		}
+		// The token bucket holds the auto-auth token, and there should be only
+		// one, so remove any existing entries before persisting a token (in
+		// case there's one leftover from a previous run of the agent or
+		// something).
+		if indexType == TokenType {
+			ids, err := getBucketIDs(s)
+			if err != nil {
+				return err
+			}
+			for _, i := range ids {
+				if err := s.Delete(i); err != nil {
+					return err
+				}
+			}
+		}
 		return s.Put([]byte(id), index)
 	})
+}
+
+func getBucketIDs(b *bolt.Bucket) ([][]byte, error) {
+	ids := [][]byte{}
+	err := b.ForEach(func(k, v []byte) error {
+		ids = append(ids, k)
+		return nil
+	})
+	return ids, err
 }
 
 // Delete an index by id from bolt storage
