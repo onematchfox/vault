@@ -31,6 +31,7 @@ import (
 	"github.com/hashicorp/vault/command/agent/auth/kerberos"
 	"github.com/hashicorp/vault/command/agent/auth/kubernetes"
 	"github.com/hashicorp/vault/command/agent/cache"
+	"github.com/hashicorp/vault/command/agent/cache/cachememdb"
 	"github.com/hashicorp/vault/command/agent/cache/persistcache"
 	agentConfig "github.com/hashicorp/vault/command/agent/config"
 	"github.com/hashicorp/vault/command/agent/sink"
@@ -446,6 +447,7 @@ func (c *AgentCommand) Run(args []string) int {
 	}
 
 	var leaseCache *cache.LeaseCache
+	var previousToken string
 	// Parse agent listener configurations
 	if config.Cache != nil && len(config.Listeners) != 0 {
 		cacheLogger := c.logger.Named("cache")
@@ -498,6 +500,25 @@ func (c *AgentCommand) Run(args []string) int {
 				}
 			}
 			cacheLogger.Info("loaded memcache from persistent storage")
+
+			// Check for previous auto-auth token
+			oldTokenBytes, err := ps.GetByType(persistcache.TokenType)
+			if err != nil {
+				c.UI.Error(fmt.Sprintf("Error in fetching previous auto-auth token: %s", err))
+				if config.Cache.Persist.ExitOnErr {
+					return 1
+				}
+			}
+			if len(oldTokenBytes) > 0 {
+				oldToken, err := cachememdb.Deserialize(oldTokenBytes[0])
+				if err != nil {
+					c.UI.Error(fmt.Sprintf("Error in deserializing previous auto-auth token cache entry: %s", err))
+					if config.Cache.Persist.ExitOnErr {
+						return 1
+					}
+				}
+				previousToken = oldToken.Token
+			}
 
 			// Remove the cache file if specified
 			if config.Cache.Persist.RemoveAfterImport {
@@ -632,8 +653,8 @@ func (c *AgentCommand) Run(args []string) int {
 			WrapTTL:                      config.AutoAuth.Method.WrapTTL,
 			EnableReauthOnNewCredentials: config.AutoAuth.EnableReauthOnNewCredentials,
 			EnableTemplateTokenCh:        enableTokenCh,
+			Token:                        previousToken,
 		})
-		// TODO(tvoran): set Token in AuthHandlerConfig if restored above
 
 		ss := sink.NewSinkServer(&sink.SinkServerConfig{
 			Logger:        c.logger.Named("sink.server"),
